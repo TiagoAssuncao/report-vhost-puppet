@@ -1,0 +1,394 @@
+\documentclass[12pt]{article}
+\usepackage[portuguese]{babel}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{hyphenat}
+\hyphenation{mate-mática recu-perar}
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage[colorinlistoftodos]{todonotes}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage[brazilian,hyperpageref]{backref}
+\usepackage[alf]{abntex2cite}
+\usepackage{minted}
+\begin{document}
+\begin{titlepage}
+
+    \newcommand{\HRule}{\rule{\linewidth}{0.5mm}} % Defines a new command for the horizontal lines, change thickness here
+
+        \center % Center everything on the page
+
+        %----------------------------------------------------------------------------------------
+        %	HEADING SECTIONS
+        %----------------------------------------------------------------------------------------
+
+        \textsc{\LARGE 4linux - Open Software Specialists}\\[1.5cm] % Name of your university/college
+        \textsc{\Large Processo de Seleção - Dezembro/2016}\\[0.5cm] % Major heading such as course name
+        \textsc{\large Desafio Técnico}\\[0.5cm] % Minor heading such as course title
+
+        %----------------------------------------------------------------------------------------
+        %	TITLE SECTION
+        %----------------------------------------------------------------------------------------
+
+        \HRule \\[0.4cm]
+        { \huge \bfseries Automatização de VirtualHosts e Instâncias Web}\\[0.4cm] % Title of your document
+        \HRule \\[1.5cm]
+
+        %----------------------------------------------------------------------------------------
+        %	AUTHOR SECTION
+        %----------------------------------------------------------------------------------------
+
+        \begin{minipage}{0.4\textwidth}
+            \begin{flushleft} \large
+                \emph{Autor:}\\
+                Tiago R. \textsc{Assunção} % Your name
+            \end{flushleft}
+
+        \end{minipage}
+        ~
+        \begin{minipage}{0.4\textwidth}
+            \begin{flushright} \large
+                \emph{Supervisor:} \\
+                Rodrigo \textsc{Tornis} % Supervisor's Name
+            \end{flushright}
+        \end{minipage}\\[2cm]
+        {\large \today}\\[2cm] % Date, change the \today to a set date if you want to be precise
+        \vfill % Fill the rest of the page with whitespace
+\end{titlepage}
+\section{Introdução}
+Para o desafio técnico, foi solicitado executar a automatização de virtualhosts e instâncias Web utilizando puppet. Para a implementação da solução,
+utilizou-se um módulo desenvolvido pela Puppet Labs, chamado
+\href{https://github.com/puppetlabs/puppetlabs-apache}{PuppetLabs Apache}. 
+
+Ao longo deste relatório será demonstrado os passos necessários para implementar a solução final.
+
+\section{Configuração Manual}
+\label{sec:configura_o_manual}
+Antes do processo de automatização, foi decidido testar a solução manual, a fim de detectar todos os possíveis problemas durante a configuração.
+A verificação deu-se em um host diferente do cedido pela 4linux. O servidor utilizado é apontado pelo domínio \href{networkabout.com}{networkabout}.
+
+Dessa maneira, foram criadas as respectivas pastas dentro do diretório /var/www/:
+
+\begin{enumerate}
+    \item teste.networkabout.com/public\_html/index.html 
+    \item exemplo.networkabout.com/public\_html/index.html 
+\end{enumerate}
+
+Foram dadas permissões para que o usuário atual passasse a ter direitos de owner dos diretórios e garantir que estes tenham acesso de leitura
+permitido.
+
+\begin{minted}[mathescape,
+    linenos,
+               numbersep=5pt,
+               gobble=2,
+               frame=lines,
+               framesep=2mm]{bash}
+
+    sudo chown -R $USER:$USER /var/www/examplo.networkabout.com/public_html
+    sudo chown -R $USER:$USER /var/www/teste.networkabout.com/public_html
+    sudo chmod -R 755 /var/www
+
+\end{minted}
+
+Logo em seguida, os arquivos de configuração foram criados. Eles são bem semelhantes, tendo mudanças apenas nos nomes, entre teste e exemplo.
+O arquivo /etc/apache2/sites-available/exampleo.networkabout.com.conf está descrito em seguida:
+
+\begin{minted}[mathescape,
+    linenos,
+               numbersep=5pt,
+               gobble=2,
+               frame=lines,
+               framesep=2mm]{apache}
+    Listen 81
+    NameVirtualHost *:81	
+    <VirtualHost *:81>
+            ServerAdmin tiago@sof2u.com
+            ServerName exemplo.networkabout.com
+            ServerAlias www.exemplo.networkabout.com
+            DocumentRoot /var/www/exemplo.networkabout.com/public_html
+            ErrorLog ${APACHE_LOG_DIR}/error.log
+            CustomLog ${APACHE_LOG_DIR}/access.log combined
+    </VirtualHost>
+
+    # vim: syntax=apache ts=4 sw=4 sts=4 sr noet
+\end{minted}
+
+A outra configuração é semelhante, alterando apenas os nomes e a porta para 80. Dessa forma, os arquivos de configuração
+foram habilitados com os seguintes comandos:
+
+\begin{minted}[mathescape,
+    linenos,
+               numbersep=5pt,
+               gobble=2,
+               frame=lines,
+               framesep=2mm]{bash}
+    sudo a2ensite examplo.networkabout.com.conf
+    sudo a2ensite teste.networkabout.com.conf
+\end{minted}
+
+Para finalizar, o servidor do apache foi reiniciado e os vhosts se comportaram como o esperado.
+
+Para executar os testes manuais, foram criados os domínios do tipo A. Sendo assim, não houve necessidade de configurar nenhum domínio
+em /etc/hosts.
+
+\section{Processo de Automatização}
+\label{sec:processo_de_automatiza_o}
+Para automatizar o processo com Puppet, foi estabelecida a escolha de utilizar o módulo desenvolvido para
+manutenção do Apache, sendo que este tem a opção de lidar com vhosts. Dessa forma, primeiramente, instalou-se o módulo:
+
+\begin{minted}[mathescape,
+    linenos,
+               numbersep=5pt,
+               gobble=2,
+               frame=lines,
+               framesep=2mm]{bash}
+    puppet module install puppetlabs-apache
+\end{minted}
+
+O primeiro passo da instalação foi automatizar a criação dos arquivos HTML nos diretórios corretos. Para tanto,
+implementou-se uma classe que cria apenas o arquivo e os diretórios de um dos apps.
+
+\begin{minted}[mathescape,
+    linenos,
+               numbersep=5pt,
+               gobble=2,
+               frame=lines,
+               framesep=2mm]{puppet}
+    $app1 = 'app1.linux.com.br'
+
+    class create_index{
+        # create a directory      
+      file {["/var/www/${app1}", "/var/www/${app1}/public_html"]:
+
+        ensure => 'directory',
+        recurse => true,
+      }
+
+      file { "/var/www/${app1}/public_html/index.html":
+        ensure  => 'present',
+        replace => 'no', # this is the important property
+        content => "<h1>INSTANCIA1</h1>",
+        mode    => '0644',
+      }
+  }
+
+    include create_index
+\end{minted}
+
+Para que fosse possível enviar parâmetros ao trecho de código que seria executado para a criação dos diretórios e arquivos,
+foi definida uma função que recebe dois parâmetros: domínio e index.
+
+\begin{minted}[mathescape,
+    linenos,
+               numbersep=5pt,
+               gobble=2,
+               frame=lines,
+               framesep=2mm]{puppet}
+    $app1 = 'app1.linux.com.br'
+
+    define create_index($domain, $index){
+        # create a directory      
+      file {["/var/www/${domain}", "/var/www/${domain}/public_html"]:
+        replace => 'yes', # this is the important property
+        ensure => 'directory',
+        recurse => true,
+      }
+
+      file { "/var/www/${domain}/public_html/index.html":
+        ensure  => 'present',
+        replace => 'yes', # this is the important property
+        content => "<h1>INSTANCIA1</h1>",
+        mode    => '0644',
+      }
+  }
+
+    create_index{
+        "1" : domain => $app1, index => 1;
+    }
+\end{minted}
+
+Foi observado que não era necessário gerar variáveis ou arrays para a criação dos apps, mas sim, apenas um índice para numerá-los.
+Assim, o código foi escrito da seguinte forma:
+
+\begin{minted}[mathescape,
+    linenos,
+               numbersep=5pt,
+               gobble=2,
+               frame=lines,
+               framesep=2mm]{puppet}
+    define create_index($index){
+        # create a directory      
+      file {[
+          "/var/www/app${index}.4linux.com.br",
+        "/var/www/app${index}.4linux.com.br/public_html"]:
+    ensure => 'directory',
+          recurse => true,
+      }
+
+      file { "/var/www/app${index}.4linux.com.br/public_html/index.html":
+        ensure  => 'present',
+        replace => 'yes',
+        content => "<h1>INSTANCIA${index}</h1>",
+        mode    => '0644',
+      }
+  }
+
+    create_index{
+        "app1" : index => 1;
+      "app2" : index => 2;
+      "app3" : index => 3;
+  }
+\end{minted}
+
+Além de deixar o código mais limpo, este processo permite que a mesma função seja chamada outras vezes para os
+aplicativos consecutivos, como podemos ver nas linhas 20 e 21.
+
+O passo consecutivo foi a criação dos vhosts utilizando o módulo do apache. Um exemplo de um vhost criado segue:
+
+
+\begin{minted}[mathescape,
+    linenos,
+               numbersep=5pt,
+               gobble=2,
+               frame=lines,
+               framesep=2mm]{puppet}
+    apache::vhost { 'app2.4linux.com.br':
+      port    => '81',
+      docroot => '/var/www/app1.4linux.com.br/public_html',
+      docroot_owner => 'www-data',
+      docroot_group => 'www-data',
+      options       => ['Indexes','FollowSymLinks','MultiViews'],
+      override      => ['none'],
+      proxy_pass => [
+          {
+              'path' => '/app2',
+          'url'  => 'http://localhost:81/app2'
+      },
+  ],
+    }
+\end{minted}
+
+Para evitar a duplicação de código, foi definida a função set\_vhost, que recebe a porta que o vhost irá operar e o
+seu respectivo index.
+
+\begin{minted}[mathescape,
+    linenos,
+               numbersep=5pt,
+               gobble=2,
+               frame=lines,
+               framesep=2mm]{puppet}
+    define set_vhosts($port, $index){
+        apache::vhost { 'app1.4linux.com.br':
+        port    => $port,
+        docroot => "/var/www/app${index}.4linux.com.br/public_html",
+        docroot_owner => 'www-data',
+        docroot_group => 'www-data',
+        options       => ['Indexes','FollowSymLinks','MultiViews'],
+        override      => ['none'],
+      }
+  }
+
+    set_vhosts{
+        "app1" : port => 80, index => 1;
+      "app2" : port => 81, index => 2;
+      "app3" : port => 82, index => 3;
+  }
+\end{minted}
+
+Foi executado um refinamento nas opções do apache::vhost e verificou-se que a chamada de algumas opções
+eram redundantes, como override, docroot\_owner e docroot\_group. Dessa maneira, implementou-se  a última
+refatoração, eliminando estas configurações desnecessáiras.
+
+
+\begin{minted}[mathescape,
+    linenos,
+               numbersep=5pt,
+               gobble=2,
+               frame=lines,
+               framesep=2mm]{puppet}
+    define set_vhosts($port, $index){
+        apache::vhost { "app${index}.4linux.com.br":
+        servername    =>  "app${index}.4linux.com.br",
+        port          => $port,
+        docroot       => "/var/www/app${index}.4linux.com.br/public_html",
+        options       => ['Includes'],
+        require => Exec['reload'],
+      }
+  }
+\end{minted}
+
+Para finalizar, foi adicionado um exec ao final de cada vhost, para executar o reload do apache:
+
+\begin{minted}[mathescape,
+    linenos,
+               numbersep=5pt,
+               gobble=2,
+               frame=lines,
+               framesep=2mm]{puppet}
+    exec { "reload":
+      command => "/etc/init.d/apache2 reload",
+      user => "root",
+    }
+\end{minted}
+
+
+O código completo, bem como cada passo do desenvolvimento pode ser visto no repositório do 
+\href{https://github.com/TiagoAssuncao/set-vhost-puppet/}{GitHub}. 
+
+Todo o procedimento foi executado e testado na VPS de IP 162.243.186.92. Para o processo automatizado,
+os domínios foram editados no arquivo /etc/hosts da seguinte maneira:
+
+\begin{minted}[mathescape,
+    linenos,
+               numbersep=5pt,
+               gobble=2,
+               frame=lines,
+               framesep=2mm]{c}
+    127.0.0.1       localhost
+    127.0.1.1       teslla.teslla   teslla
+    127.0.1.1       aboutmeet.com   teslla
+    162.243.186.92  app1.4linux.com.br
+    162.243.186.92  app2.4linux.com.br
+    162.243.186.92  app3.4linux.com.br
+\end{minted}
+
+Para os testes, foram inseridas as urls seguintes, com os respectivos resultados:
+
+\begin{itemize}
+    \item http://app1.4linux.com.br/
+    \item http://app2.4linux.com.br:81/
+    \item http://app3.4linux.com.br:82/
+\end{itemize}
+
+\begin{itemize}
+    \item INSTANCIA1a
+    \item INSTANCIA2a
+    \item INSTANCIA3a
+\end{itemize}
+
+Para iniciar a configuração de infraestrutura utilizando o código desenvolvido, basta apenas
+executar o puppet com previlégios de super usuário:
+
+\begin{minted}[mathescape,
+    linenos,
+               numbersep=5pt,
+               gobble=2,
+               frame=lines,
+               framesep=2mm]{bash}
+    sudo puppet apply puppet-apache.pp
+\end{minted}
+
+\section{Conclusão}
+\label{sec:conclus_o}
+
+Utilizando a automatização de Deploy, é possível configurar a infraestrutura como um código, estruturado e testado
+para seguir um padrão estabelecido. Ao executar a configuração de ambiente uma vez, esta pode ser repetida quantas
+vezes forem necessárias, possibilitando a alta escalabilidade. Além de, existir uma vasta documentação para o Puppet, 
+facilitando o trabalho do desenvolvedor.
+
+Caso a tecnologia Puppet não seja de agrado da equipe, existem várias outras ferramentas alternativas que fazem bem o
+trabalho, como: \href{https://www.chef.io/chef/}{Chef}, \href{http://cfengine.com/}{CFEngine}, \href{http://saltstack.com/}{Salt},
+\href{http://www.ansibleworks.com/}{Ansible}. De toda maneira, são muitas as opções que possibilitam a automatização
+de infraestrutura com êxito.
+\end{document}
